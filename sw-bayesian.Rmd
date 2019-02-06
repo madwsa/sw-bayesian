@@ -156,7 +156,7 @@ Let's try a multi-level model allowing the fixed effects to vary by planet:
 #         chains = 1, iter = 100)
 # 
 # saveRDS(mod_04_multilevel_planet, './data/mod_04_multilevel_planet.rds')
-mod_04_multilevel_planet <- readRDS('./data/mod_04_multilevel_planet.rds')
+mod_04_multilevel_planet <- readRDS('./data/mod_04_multilevel_planet_bg.rds')
 ```
 
 ```{r}
