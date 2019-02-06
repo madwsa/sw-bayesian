@@ -1,0 +1,236 @@
+---
+title: "Bayesian Hierarchical Models for Personal Landspeeder Insurance"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(ggthemes)
+library(brms)
+
+train <- readRDS('./data/simulated_landspeeder_data_train.rds')
+test <- readRDS('./data/simulated_landspeeder_data_test.rds')
+```
+
+### Let's fit some models!
+
+First, a single GLM for everyone:
+
+```{r}
+mod_01_glm_all <-
+    glm(total_claims ~ planet + pilot + vehicle,
+        family = poisson(link = 'log'),
+        data = train)
+
+summary(mod_01_glm_all)
+```
+
+Now that we've built this model, let's look at the actual to expected to see
+how well we predicted the outcome on our test data:
+
+```{r}
+# actual to expected by score decile
+test %>%
+    mutate(galaxywide_score = predict(mod_01_glm_all, test, type = 'response'),
+           gw_score_decile = ntile(galaxywide_score, 20)) %>%
+    group_by(gw_score_decile) %>%
+    summarise(mean_claims = mean(total_claims),
+              sigma_claims = sd(total_claims),
+              mean_score = mean(galaxywide_score)) %>%
+    ggplot(aes(x = gw_score_decile, y = mean_claims)) + 
+    geom_line(color = 'blue', size = 1.5) + geom_point(color = 'blue') +
+    geom_line(aes(y = mean_score), color = 'red') + 
+    theme_tufte(base_size = 14,
+                base_family = 'sans') + 
+    theme(legend.title=element_blank()) +
+    ggtitle('Galaxywide score, all planets')
+```
+
+
+Doesn't look too bad!  Let's see how well it does on each of our two planets:
+
+```{r}
+test %>% 
+    mutate(galaxywide_score = predict(mod_01_glm_all, test, type = 'response'),
+           gw_score_decile = ntile(galaxywide_score, 20)) %>%
+    filter(planet == 'a.) Tatooine') %>%
+    group_by(gw_score_decile) %>%
+    summarise(mean_claims = mean(total_claims),
+              sigma_claims = sd(total_claims),
+              mean_score = mean(galaxywide_score)) %>%
+    ggplot(aes(x = gw_score_decile, y = mean_claims)) + 
+    geom_line(color = 'blue', size = 1.5) + geom_point(color = 'blue') +
+    geom_line(aes(y = mean_score), color = 'red') + 
+    theme_tufte(base_size = 14,
+                base_family = 'sans') + 
+    theme(legend.title=element_blank()) +
+    ggtitle('Galaxywide score, Tatooine')
+```
+
+```{r}
+test %>% 
+    mutate(galaxywide_score = predict(mod_01_glm_all, test, type = 'response'),
+           gw_score_decile = ntile(galaxywide_score, 20)) %>%
+    filter(planet == 'b.) Hoth') %>%
+    group_by(gw_score_decile) %>%
+    summarise(mean_claims = mean(total_claims),
+              sigma_claims = sd(total_claims),
+              mean_score = mean(galaxywide_score)) %>%
+    ggplot(aes(x = gw_score_decile, y = mean_claims)) + 
+    geom_line(color = 'blue', size = 1.5) + geom_point(color = 'blue') +
+    geom_line(aes(y = mean_score), color = 'red') + 
+    theme_tufte(base_size = 14,
+                base_family = 'sans') + 
+    theme(legend.title=element_blank()) +
+    ggtitle('Galaxywide score, Hoth')
+```
+
+Interesting.  What would happen if we fit a model to each planet independently?
+
+```{r}
+mod_02_glm_tatooine <-
+    glm(total_claims ~ pilot + vehicle,
+        family = poisson(link = 'log'),
+        data = train[train$planet == 'a.) Tatooine', ])
+
+summary(mod_02_glm_tatooine)
+```
+
+```{r}
+mod_03_glm_hoth <-
+    glm(total_claims ~ pilot + vehicle,
+        family = poisson(link = 'log'),
+        data = train[train$planet == 'b.) Hoth', ])
+
+summary(mod_03_glm_hoth)
+```
+
+Hmm, it looks like the effect for the T-47 is completely different on Hoth as
+it is on Tatooine.  The effects for Inexperienced pilots seems similar, but the 
+p-values for these effects do not seem promising.  Let's take a closer look,
+by looking at the actual mean claims vs the expected, group by group.
+
+```{r}
+train %>%
+    transmute(vehicle, planet, total_claims,
+              galaxywide_score = predict(mod_01_glm_all, type = 'response')) %>%
+    gather(type, claim_rate, total_claims:galaxywide_score, factor_key = TRUE) %>%
+    group_by(vehicle, type, planet) %>%
+    summarise(mean_claims = mean(claim_rate),
+              sigma = sd(claim_rate)) %>%
+    ggplot(aes(x = vehicle, y = mean_claims, colour = type)) + 
+    geom_line(aes(group = type), size = 1.5) +
+    geom_pointrange(aes(ymin = mean_claims - sigma, 
+                        ymax = mean_claims + sigma)) +  
+    facet_grid(cols = vars(planet)) +
+    theme_tufte(base_size = 16,
+                base_family = 'sans') + 
+    theme(legend.title=element_blank())
+```
+
+```{r}
+train %>%
+    transmute(pilot, planet, total_claims,
+              galaxywide_score = predict(mod_01_glm_all, type = 'response')) %>%
+    gather(type, claim_rate, total_claims:galaxywide_score, factor_key = TRUE) %>%
+    group_by(pilot, type, planet) %>%
+    summarise(mean_claims = mean(claim_rate),
+              sigma = sd(claim_rate)) %>%
+    ggplot(aes(x = pilot, y = mean_claims, colour = type)) + 
+    geom_line(aes(group = type), size = 1.5) +
+    geom_pointrange(aes(ymin = mean_claims - sigma, 
+                        ymax = mean_claims + sigma)) +  
+    facet_grid(rows = vars(planet)) + 
+    theme_tufte(base_size = 16,
+                base_family = 'sans') + 
+    theme(legend.title=element_blank())
+```
+
+Let's try a multi-level model allowing the fixed effects to vary by planet:
+
+```{r}
+# mod_04_multilevel_planet <-
+#     brm(total_claims ~ (1 | planet) + pilot + vehicle + 
+#             (0 + pilot + vehicle | planet),
+#         data = train, brmsfamily('poisson', link = 'log'),
+#         chains = 1, iter = 100)
+# 
+# saveRDS(mod_04_multilevel_planet, './data/mod_04_multilevel_planet.rds')
+mod_04_multilevel_planet <- readRDS('./data/mod_04_multilevel_planet.rds')
+```
+
+```{r}
+test_score_multilevel <- 
+    predict(mod_04_multilevel_planet, newdata = test)
+```
+
+```{r}
+test %>%
+    transmute(vehicle, planet, total_claims,
+              multilevel_bayes = test_score_multilevel[, 1]) %>%
+    gather(type, claim_rate, total_claims:multilevel_bayes, factor_key = TRUE) %>%
+    group_by(vehicle, type, planet) %>%
+    summarise(mean_claims = mean(claim_rate),
+              sigma = sd(claim_rate)) %>%
+    ggplot(aes(x = vehicle, y = mean_claims, colour = type)) + 
+    geom_line(aes(group = type), size = 1.5) +
+    geom_pointrange(aes(ymin = mean_claims - sigma, 
+                        ymax = mean_claims + sigma)) +  
+    facet_grid(cols = vars(planet)) + 
+    theme_tufte(base_size = 16,
+                base_family = 'sans') + 
+    theme(legend.title=element_blank())
+```
+
+```{r}
+test %>%
+    transmute(pilot, planet, total_claims,
+              multilevel_bayes = test_score_multilevel[, 1]) %>%
+    gather(type, claim_rate, total_claims:multilevel_bayes, factor_key = TRUE) %>%
+    group_by(pilot, type, planet) %>%
+    summarise(mean_claims = mean(claim_rate),
+              sigma = sd(claim_rate)) %>%
+    ggplot(aes(x = pilot, y = mean_claims, colour = type)) + 
+    geom_line(aes(group = type), size = 1.5) +
+    geom_pointrange(aes(ymin = mean_claims - sigma, 
+                        ymax = mean_claims + sigma)) +  
+    facet_grid(rows = vars(planet)) + 
+    theme_tufte(base_size = 16,
+                base_family = 'sans') + 
+    theme(legend.title=element_blank())
+```
+
+```{r}
+test %>% 
+    mutate(multilevel_score = test_score_multilevel[, 1],
+           score_decile = ntile(multilevel_score, 10)) %>%
+    filter(planet == 'b.) Hoth') %>%
+    group_by(score_decile) %>%
+    summarise(mean_claims = mean(total_claims),
+              sigma_claims = sd(total_claims),
+              mean_score = mean(multilevel_score)) %>%
+    ggplot(aes(x = score_decile, y = mean_claims)) + 
+    geom_line(color = 'blue', size = 1.5) + geom_point(color = 'blue') +
+    geom_line(aes(y = mean_score), color = 'red') + 
+    theme_tufte(base_size = 14,
+                base_family = 'sans') + 
+    theme(legend.title=element_blank()) +
+    ggtitle('Bayesian multilevel score, Hoth')
+```
+
+```{r}
+test %>% 
+    mutate(multilevel_score = test_score_multilevel[, 1],
+           score_decile = ntile(multilevel_score, 20)) %>%
+    group_by(score_decile) %>%
+    summarise(mean_claims = mean(total_claims),
+              sigma_claims = sd(total_claims),
+              mean_score = mean(multilevel_score)) %>%
+    ggplot(aes(x = score_decile, y = mean_claims)) + 
+    geom_line(color = 'blue', size = 1.5) + geom_point(color = 'blue') +
+    geom_line(aes(y = mean_score), color = 'red') + 
+    theme_tufte(base_size = 14,
+                base_family = 'sans') + 
+    theme(legend.title=element_blank()) +
+    ggtitle('Bayesian multilevel score, Tatooine')
+```
