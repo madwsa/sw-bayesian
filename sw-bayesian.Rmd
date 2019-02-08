@@ -1,6 +1,8 @@
 ---
 title: "Bayesian Hierarchical Models for Personal Landspeeder Insurance"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 ```{r}
@@ -149,15 +151,22 @@ train %>%
 Let's try a multi-level model allowing the fixed effects to vary by planet:
 
 ```{r}
-# mod_04_multilevel_planet <-
-#     brm(total_claims ~ (1 | planet) + pilot + vehicle + 
-#             (0 + pilot + vehicle | planet),
-#         data = train, brmsfamily('poisson', link = 'log'),
-#         chains = 1, iter = 100)
-# 
-# saveRDS(mod_04_multilevel_planet, './data/mod_04_multilevel_planet.rds')
+# first let's see what parameters are actually estimated in this model
+priors <- get_prior(total_claims ~ (1 | planet) + pilot + vehicle + 
+                        (0 + pilot + vehicle | planet),
+                    data = train, family = poisson(link = 'log'))
+
+# look over the stan code
+make_stancode(total_claims ~ (1 | planet) + pilot + vehicle + 
+                        (0 + pilot + vehicle | planet),
+                    data = train, family = poisson(link = 'log'),
+              prior = prior(normal(0, 5)))
+
+# fit this in a separate process since it takes a while
 mod_04_multilevel_planet <- readRDS('./data/mod_04_multilevel_planet_bg.rds')
 ```
+
+Now we'll run through some of the same plots we looked at before.
 
 ```{r}
 test_score_multilevel <- 
